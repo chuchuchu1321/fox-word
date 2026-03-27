@@ -94,7 +94,7 @@ function buildAnimalTextures(sheet: Texture): Record<FoxState, Texture[]> {
   }
 }
 
-function makeSound(src: string, vol: number, loop = true) {
+function makeSound(src: string, loop = true) {
   return new Howl({ src:[src], loop, volume:0, onloaderror:()=>{} })
 }
 
@@ -137,11 +137,11 @@ export default function FoxCanvas() {
     let heartbeatTimer: ReturnType<typeof setTimeout>
 
     const snd = {
-      wind:     makeSound('/audio/wind.mp3',     0.12),
-      rain:     makeSound('/audio/rain.mp3',     0.55),
-      snow:     makeSound('/audio/snow.mp3',     0.30),
-      birds:    makeSound('/audio/birds.mp3',    0.45),
-      crickets: makeSound('/audio/crickets.mp3', 0.50),
+      wind:     makeSound('/audio/wind.mp3'),
+      rain:     makeSound('/audio/rain.mp3'),
+      snow:     makeSound('/audio/snow.mp3'),
+      birds:    makeSound('/audio/birds.mp3'),
+      crickets: makeSound('/audio/crickets.mp3'),
     }
     let audioStarted = false
     const startAudio = () => {
