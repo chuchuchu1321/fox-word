@@ -605,23 +605,6 @@ export default function FoxCanvas() {
         <Pill>{STATE_LABELS[displayState]}</Pill>
       </div>
 
-      <div style={{ position:'absolute', bottom:16, left:'50%', transform:'translateX(-50%)',
-        display:'flex', flexDirection:'column', alignItems:'center', gap:8, userSelect:'none' }}>
-        <div style={{ display:'flex', gap:6, flexWrap:'wrap', justifyContent:'center' }}>
-          {(Object.keys(BG_LABELS) as BgKey[]).map(k => (
-            <CtrlBtn key={k} onClick={() => ctrl.current?.setBg(k)}>{BG_LABELS[k]}</CtrlBtn>
-          ))}
-        </div>
-        <div style={{ display:'flex', gap:6, flexWrap:'wrap', justifyContent:'center' }}>
-          {(Object.keys(STATE_LABELS) as FoxState[]).map(s => (
-            <CtrlBtn key={s} onClick={() => ctrl.current?.setFoxState(s)}>{STATE_LABELS[s]}</CtrlBtn>
-          ))}
-          <div style={{ width:1, background:'rgba(255,255,255,0.2)', margin:'0 2px' }} />
-          {(Object.keys(WEATHER_LABELS) as Weather[]).map(w => (
-            <CtrlBtn key={w} onClick={() => ctrl.current?.setWeatherDirect(w)}>{WEATHER_LABELS[w]}</CtrlBtn>
-          ))}
-        </div>
-      </div>
     </div>
   )
 }
