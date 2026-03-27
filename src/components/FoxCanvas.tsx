@@ -69,10 +69,7 @@ function getTimeOverlay(m: number): [number, number, number, number] {
   ]
 }
 
-const BG_LABELS: Record<BgKey, string> = {
-  meadow:'🌿 草地', dawn:'🌸 黎明', mist:'🌫 薄雾',
-  autumn:'🍂 秋野', night:'🌙 星空', sunset:'🌇 落日',
-}
+
 const STATE_LABELS: Record<FoxState, string> = {
   sleeping:'😴 睡觉', wakingUp:'✨ 惊醒', idle:'🐾 发呆', walking:'🏃 走路',
 }
@@ -592,8 +589,6 @@ export default function FoxCanvas() {
     }
   }, [])
 
-  const ctrl = controlsRef
-
   return (
     <div style={{ width:'100%', height:'100%', position:'relative' }}>
       <div ref={containerRef} style={{ width:'100%', height:'100%' }} />
@@ -619,18 +614,3 @@ function Pill({ children }: { children: React.ReactNode }) {
   )
 }
 
-function CtrlBtn({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
-  return (
-    <button onClick={onClick} style={{
-      background:'rgba(0,0,0,0.52)', color:'#fff', fontFamily:'monospace',
-      fontSize:12, padding:'5px 12px', borderRadius:16,
-      border:'1px solid rgba(255,255,255,0.18)',
-      backdropFilter:'blur(8px)', whiteSpace:'nowrap', cursor:'pointer',
-      letterSpacing:1, transition:'background 0.15s',
-    }}
-    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.18)')}
-    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.52)')}>
-      {children}
-    </button>
-  )
-}
