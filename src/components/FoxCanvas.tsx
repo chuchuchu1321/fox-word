@@ -135,9 +135,14 @@ export default function FoxCanvas() {
     let weather: Weather = 'clear'
     let particles: Particle[] = []
     let hearts:    Heart[]    = []
-    let bubble:    Bubble | null = null
+    let bubble:     Bubble | null = null
     let bubbleTimer = 0
-    let groundItem: Item | null = null
+    let groundItem: Item   | null = null
+    let speechText  = ''          // AI 狐狸说话内容
+    let speechAlpha = 0
+    let speechTimer = 0           // >0 = 显示中，倒计时
+    let speechCooldown = 0        // 下次触发冷却（帧数）
+    let speechFetching = false
     let pendingBgKey: BgKey | null = null
     let mouseX = 0, mouseY = 0
     let petCooldown = 0
@@ -339,12 +344,22 @@ export default function FoxCanvas() {
       app.stage.addChild(foxContainer)
       app.stage.addChild(fireflyGfx)
 
-      // 思维气泡 Text 节点
+      // 思维气泡 Text 节点（emoji）
       const bubbleStyle = new TextStyle({ fontSize: 28, fontFamily: 'serif' })
       const bubbleText  = new Text({ text: '', style: bubbleStyle })
       bubbleText.anchor.set(0.5, 1)
       bubbleText.alpha = 0
       app.stage.addChild(bubbleText)
+
+      // AI 语音 Text 节点（狐狸说话）
+      const speechStyle = new TextStyle({
+        fontSize: 15, fontFamily: 'serif', fill: 0xfff8e8,
+        dropShadow: { color: 0x000000, blur: 4, distance: 0, alpha: 0.6 },
+      })
+      const speechNode = new Text({ text: '', style: speechStyle })
+      speechNode.anchor.set(0.5, 1)
+      speechNode.alpha = 0
+      app.stage.addChild(speechNode)
 
       const texMap = buildAnimalTextures(foxSheet)
       const make = (key: FoxState, fps: number, loop = true): AnimatedSprite => {
@@ -754,6 +769,47 @@ export default function FoxCanvas() {
           bubbleText.x = foxContainer.x + 20
           bubbleText.y = foxContainer.y - FRAME*FOX_SCALE*1.1 - bubble.offsetY
           if (bubble.timer <= 0) { bubble = null; bubbleText.alpha = 0 }
+        }
+
+        // ── AI 狐狸说话 ───────────────────────────────────────────
+        if (speechCooldown > 0) speechCooldown -= ticker.deltaTime
+
+        // 每隔约 4 分钟（14400帧@60fps）随机触发
+        if (!speechFetching && speechTimer <= 0 && speechCooldown <= 0
+            && currentFoxState !== 'sleeping' && Math.random() < 0.0003 * ticker.deltaTime) {
+          speechFetching = true
+          fetch('/api/fox-chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              weather,
+              state:     currentFoxState,
+              hour:      Math.floor(gameMinutes / 60),
+              affection: Math.round(affection),
+            }),
+          })
+            .then(r => r.json())
+            .then(({ text }: { text: string }) => {
+              if (text) {
+                speechText  = text
+                speechTimer = 280
+                speechAlpha = 0
+              }
+              speechCooldown = 7200 + Math.random() * 7200  // 2-4 分钟再触发
+              speechFetching = false
+            })
+            .catch(() => { speechFetching = false })
+        }
+
+        if (speechTimer > 0) {
+          speechTimer -= ticker.deltaTime
+          if (speechTimer > 230)      speechAlpha = Math.min(1, speechAlpha + 0.04 * ticker.deltaTime)
+          else if (speechTimer < 60)  speechAlpha = Math.max(0, speechAlpha - 0.03 * ticker.deltaTime)
+          speechNode.text  = speechText
+          speechNode.alpha = speechAlpha
+          speechNode.x     = foxContainer.x
+          speechNode.y     = foxContainer.y - FRAME*FOX_SCALE*1.45
+          if (speechTimer <= 0) { speechNode.alpha = 0; speechText = '' }
         }
       })
 

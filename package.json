@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
     "@types/howler": "^2.2.12",
     "howler": "^2.2.4",
     "pixi.js": "^8.17.1",
