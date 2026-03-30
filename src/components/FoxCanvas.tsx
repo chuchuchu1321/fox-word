@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Application, Container, Sprite, Texture,
-  Graphics, Ticker, AnimatedSprite, Assets, Rectangle,
+  Graphics, Ticker, AnimatedSprite, Assets, Rectangle, Text, TextStyle,
 } from 'pixi.js'
 import { createMachine, createActor } from 'xstate'
 import { Howl } from 'howler'
@@ -29,16 +29,26 @@ const foxMachine = createMachine({
   },
 })
 
-interface Particle { x:number; y:number; speed:number; size:number; wobble:number; wobbleSpeed:number }
+interface Particle { x:number; y:number; speed:number; size:number; wobble:number; wobbleSpeed:number; rot:number }
 function makeParticle(w:number, h:number, top=false): Particle {
   return { x:Math.random()*w, y:top?-(10+Math.random()*h*0.3):Math.random()*h,
     speed:3+Math.random()*4, size:1+Math.random()*2.5,
-    wobble:Math.random()*Math.PI*2, wobbleSpeed:0.02+Math.random()*0.03 }
+    wobble:Math.random()*Math.PI*2, wobbleSpeed:0.02+Math.random()*0.03, rot:Math.random()*Math.PI*2 }
 }
+type Season = 'spring' | 'autumn' | null
+function getSeason(): Season {
+  const m = new Date().getMonth() // 0-11
+  if (m >= 2 && m <= 4) return 'spring'  // 3-5月 樱花
+  if (m >= 8 && m <= 10) return 'autumn' // 9-11月 落叶
+  return null
+}
+interface SeasonParticle { x:number; y:number; vx:number; vy:number; rot:number; rotSpeed:number; size:number; wobble:number }
 
 interface Heart   { x:number; y:number; vx:number; vy:number; alpha:number; sc:number }
 interface Star    { x:number; y:number; r:number; phase:number; speed:number }
 interface Firefly { x:number; y:number; vx:number; vy:number; phase:number; timer:number }
+interface Bubble  { emoji:string; alpha:number; timer:number; offsetY:number }
+interface Item    { x:number; y:number; alpha:number; phase:number }
 
 // 环境光：随时间渐变的全屏色调叠加
 function getTimeOverlay(m: number): [number, number, number, number] {
@@ -104,9 +114,10 @@ type Controls = {
 export default function FoxCanvas() {
   const containerRef = useRef<HTMLDivElement>(null)
   const controlsRef  = useRef<Controls | null>(null)
-  const [displayTime,    setDisplayTime]  = useState('06:00')
-  const [displayWeather, setWeather]      = useState<Weather>('rain')
-  const [displayState,   setDisplayState] = useState<FoxState>('sleeping')
+  const [displayTime,      setDisplayTime]     = useState('06:00')
+  const [displayWeather,   setWeather]         = useState<Weather>('rain')
+  const [displayState,     setDisplayState]    = useState<FoxState>('sleeping')
+  const [displayAffection, setDisplayAffection] = useState(50)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -124,10 +135,22 @@ export default function FoxCanvas() {
     let weather: Weather = 'clear'
     let particles: Particle[] = []
     let hearts:    Heart[]    = []
+    let bubble:    Bubble | null = null
+    let bubbleTimer = 0
+    let groundItem: Item | null = null
     let pendingBgKey: BgKey | null = null
     let mouseX = 0, mouseY = 0
     let petCooldown = 0
     let nearbyGlow  = 0
+
+    // ── 好感度系统 ──────────────────────────────────────────────
+    const foxData = JSON.parse(localStorage.getItem('fox_data') ?? '{"affection":50,"lastVisit":0}')
+    const daysSince = Math.floor((Date.now() - foxData.lastVisit) / 86400000)
+    let affection = Math.max(0, Math.min(100, foxData.affection - daysSince * 3))
+    const saveAffection = () =>
+      localStorage.setItem('fox_data', JSON.stringify({ affection: Math.round(affection), lastVisit: Date.now() }))
+    saveAffection()
+    setDisplayAffection(Math.round(affection))
     let currentBgKey: BgKey = getBgForHour(gameMinutes / 60)
     let timeInterval:  ReturnType<typeof setInterval> | null = null
     let weatherTimer:  ReturnType<typeof setInterval> | null = null
@@ -203,11 +226,18 @@ export default function FoxCanvas() {
     const scheduleHeartbeat = () => {
       heartbeatTimer = setTimeout(() => {
         const s = currentFoxState, r = Math.random()
-        if      (s === 'sleeping' && r < 0.25) actor.send({ type: 'WAKE_UP' })
+        // 好感度影响行为倾向
+        let wakeChance  = affection < 30 ? 0.12 : 0.25
+        let walkChance  = affection > 70 ? 0.55 : 0.40
+        let sleepChance = affection < 30 ? 0.70 : 0.55
+        // 天气影响：雨/雪时更多睡觉，减少走动
+        if (weather === 'rain') { walkChance *= 0.4; sleepChance = Math.min(0.85, sleepChance + 0.20) }
+        if (weather === 'snow') { walkChance *= 0.6; sleepChance = Math.min(0.80, sleepChance + 0.10) }
+        if      (s === 'sleeping' && r < wakeChance) actor.send({ type: 'WAKE_UP' })
         else if (s === 'idle') {
-          if      (r < 0.40) actor.send({ type: 'START_WALK' })
-          else if (r < 0.55) actor.send({ type: 'FALL_ASLEEP' })
-        } else if (s === 'walking' && r < 0.30) actor.send({ type: 'STOP_WALK' })
+          if      (r < walkChance)  actor.send({ type: 'START_WALK' })
+          else if (r < sleepChance) actor.send({ type: 'FALL_ASLEEP' })
+        } else if (s === 'walking' && r < (weather !== 'clear' ? 0.50 : 0.30)) actor.send({ type: 'STOP_WALK' })
         scheduleHeartbeat()
       }, 5000 + Math.random() * 5000)
     }
@@ -225,6 +255,20 @@ export default function FoxCanvas() {
       targetX = baseX; targetY = baseY
       mouseX = W/2; mouseY = H/2
       particles = Array.from({ length: 120 }, () => makeParticle(W, H))
+
+      const season = getSeason()
+      const seasonParticles: SeasonParticle[] = season
+        ? Array.from({ length: 40 }, () => ({
+            x: Math.random() * W,
+            y: Math.random() * H,
+            vx: (Math.random() - 0.5) * 0.8,
+            vy: 0.4 + Math.random() * 0.8,
+            rot: Math.random() * Math.PI * 2,
+            rotSpeed: (Math.random() - 0.5) * 0.06,
+            size: 2 + Math.random() * 3,
+            wobble: Math.random() * Math.PI * 2,
+          }))
+        : []
 
       // 星星：只在屏幕上方 25% 分布
       const stars: Star[] = Array.from({ length: 80 }, () => ({
@@ -274,15 +318,19 @@ export default function FoxCanvas() {
       // 图层顺序（从底到顶）
       const skyGfx         = new Graphics()  // 星星 + 月亮
       const weatherGfx     = new Graphics()  // 雨 / 雪
+      const seasonGfx      = new Graphics()  // 季节粒子（樱花/落叶）
       const timeOverlayGfx = new Graphics()  // 环境光色调
       const fxGfx          = new Graphics()  // 光晕 + 爱心（狐狸下方）
+      const itemGfx        = new Graphics()  // 地面物体（狐狸下方）
       const fireflyGfx     = new Graphics()  // 萤火虫（狐狸上方）
 
       app.stage.addChild(bgContainer)
       app.stage.addChild(skyGfx)
       app.stage.addChild(weatherGfx)
+      app.stage.addChild(seasonGfx)
       app.stage.addChild(timeOverlayGfx)
       app.stage.addChild(fxGfx)
+      app.stage.addChild(itemGfx)
 
       const FOX_SCALE = (H * 0.14) / FRAME
       const foxContainer = new Container()
@@ -290,6 +338,13 @@ export default function FoxCanvas() {
       foxContainer.scale.set(FOX_SCALE)
       app.stage.addChild(foxContainer)
       app.stage.addChild(fireflyGfx)
+
+      // 思维气泡 Text 节点
+      const bubbleStyle = new TextStyle({ fontSize: 28, fontFamily: 'serif' })
+      const bubbleText  = new Text({ text: '', style: bubbleStyle })
+      bubbleText.anchor.set(0.5, 1)
+      bubbleText.alpha = 0
+      app.stage.addChild(bubbleText)
 
       const texMap = buildAnimalTextures(foxSheet)
       const make = (key: FoxState, fps: number, loop = true): AnimatedSprite => {
@@ -316,12 +371,34 @@ export default function FoxCanvas() {
 
       app.stage.eventMode = 'static'
       app.stage.on('pointermove', (e) => { mouseX = e.global.x; mouseY = e.global.y })
+      app.stage.on('pointerdown', (e) => {
+        // 点击地面（非狐狸区域）扔东西
+        const gx = e.global.x, gy = e.global.y
+        const onFox = Math.abs(gx - foxContainer.x) < FRAME*FOX_SCALE*0.8
+                   && Math.abs(gy - foxContainer.y) < FRAME*FOX_SCALE*1.0
+        if (!onFox && gy > H*0.52 && gy < H*0.88) {
+          groundItem = { x: gx, y: Math.min(gy, H*0.82), alpha: 1, phase: 0 }
+          // 狐狸走过去
+          if (currentFoxState === 'idle' || currentFoxState === 'sleeping') {
+            targetX = Math.max(W*0.1, Math.min(W*0.9, gx))
+            targetY = Math.max(H*0.58, Math.min(H*0.76, Math.min(gy, H*0.80)))
+            actor.send({ type: 'WAKE_UP' })
+            setTimeout(() => actor.send({ type: 'START_WALK' }), 800)
+          } else if (currentFoxState === 'walking') {
+            targetX = Math.max(W*0.1, Math.min(W*0.9, gx))
+            targetY = Math.max(H*0.58, Math.min(H*0.76, Math.min(gy, H*0.80)))
+          }
+        }
+      })
 
       foxContainer.eventMode = 'static'
       foxContainer.cursor = 'pointer'
       foxContainer.on('pointerdown', () => {
         if (petCooldown > 0) return
         petCooldown = 120
+        affection = Math.min(100, affection + 5)
+        setDisplayAffection(Math.round(affection))
+        saveAffection()
         for (let i = 0; i < 6; i++) {
           hearts.push({
             x: (Math.random()-0.5)*40,
@@ -459,6 +536,33 @@ export default function FoxCanvas() {
           weatherGfx.fill({ color:0xeef4ff, alpha:0.75 })
         }
 
+        // ── 季节粒子（樱花/落叶） ─────────────────────────────────
+        seasonGfx.clear()
+        if (season && seasonParticles.length > 0) {
+          const springColor  = 0xffb7c5  // 粉樱花
+          const autumnColor  = 0xe8812a  // 橙落叶
+          const col = season === 'spring' ? springColor : autumnColor
+          for (const sp of seasonParticles) {
+            sp.wobble   += 0.022 * ticker.deltaTime
+            sp.rot      += sp.rotSpeed * ticker.deltaTime
+            sp.x        += (sp.vx + Math.sin(sp.wobble) * 0.6) * ticker.deltaTime
+            sp.y        += sp.vy * ticker.deltaTime
+            if (sp.y > H + 20) { sp.y = -(10 + Math.random()*H*0.2); sp.x = Math.random()*W }
+            if (sp.x < -20)    sp.x = W + 20
+            if (sp.x > W + 20) sp.x = -20
+            // 用旋转矩形模拟花瓣/叶片
+            const hw = sp.size, hh = sp.size * 0.55
+            const cos = Math.cos(sp.rot), sin = Math.sin(sp.rot)
+            seasonGfx.poly([
+              sp.x + cos*hw - sin*hh, sp.y + sin*hw + cos*hh,
+              sp.x - cos*hw - sin*hh, sp.y - sin*hw + cos*hh,
+              sp.x - cos*hw + sin*hh, sp.y - sin*hw - cos*hh,
+              sp.x + cos*hw + sin*hh, sp.y + sin*hw - cos*hh,
+            ])
+          }
+          seasonGfx.fill({ color: col, alpha: 0.72 })
+        }
+
         // ── 时间环境光叠加 ─────────────────────────────────────────
         const [or, og, ob, oa] = getTimeOverlay(gameMinutes)
         timeOverlayGfx.clear()
@@ -491,6 +595,16 @@ export default function FoxCanvas() {
           fxGfx.circle(foxContainer.x, foxContainer.y - nr, nr)
           fxGfx.fill({ color: 0xff7c2a, alpha: 0.20 + Math.sin(elapsed*0.04)*0.08 })
         }
+        // 下雨时狐狸周围淡蓝湿润光晕
+        if (weather === 'rain') {
+          fxGfx.circle(foxContainer.x, foxContainer.y - FRAME*FOX_SCALE*0.45, FRAME*FOX_SCALE*0.9)
+          fxGfx.fill({ color: 0x88ccff, alpha: 0.10 + Math.sin(elapsed*0.05)*0.04 })
+        }
+        // 下雪时狐狸周围淡白光晕
+        if (weather === 'snow') {
+          fxGfx.circle(foxContainer.x, foxContainer.y - FRAME*FOX_SCALE*0.45, FRAME*FOX_SCALE*0.85)
+          fxGfx.fill({ color: 0xeef4ff, alpha: 0.12 })
+        }
 
         // 爱心粒子
         for (let i = hearts.length-1; i >= 0; i--) {
@@ -507,6 +621,35 @@ export default function FoxCanvas() {
           fxGfx.circle(hx+sc*0.5, hy-sc*0.3, sc*0.55)
           fxGfx.poly([hx-sc, hy, hx+sc, hy, hx, hy+sc*1.2])
           fxGfx.fill({ color: 0xff4477, alpha: hrt.alpha })
+        }
+
+        // ── 地面物体 ──────────────────────────────────────────────
+        itemGfx.clear()
+        if (groundItem) {
+          groundItem.phase += 0.06 * ticker.deltaTime
+          // 检查狐狸是否到达
+          const idx = groundItem.x - foxContainer.x
+          const idy = groundItem.y - foxContainer.y
+          const idist = Math.sqrt(idx*idx + idy*idy)
+          if (idist < FRAME*FOX_SCALE*1.2 && currentFoxState !== 'walking') {
+            // 到达：触发检查气泡并消除物体
+            bubble = { emoji: '❓', alpha: 0, timer: 160, offsetY: 0 }
+            bubbleText.text = '❓'
+            groundItem.alpha -= 0.04 * ticker.deltaTime
+            if (groundItem.alpha <= 0) groundItem = null
+          }
+          if (groundItem) {
+            const pulse = 0.6 + 0.4 * Math.sin(groundItem.phase)
+            // 外光晕
+            itemGfx.circle(groundItem.x, groundItem.y, 14)
+            itemGfx.fill({ color: 0xffee66, alpha: groundItem.alpha * 0.18 * pulse })
+            // 中圈
+            itemGfx.circle(groundItem.x, groundItem.y, 7)
+            itemGfx.fill({ color: 0xffdd33, alpha: groundItem.alpha * 0.55 * pulse })
+            // 亮核
+            itemGfx.circle(groundItem.x, groundItem.y, 3)
+            itemGfx.fill({ color: 0xffffff, alpha: groundItem.alpha * 0.90 })
+          }
         }
 
         // ── 萤火虫（18-22h） ──────────────────────────────────────
@@ -544,6 +687,19 @@ export default function FoxCanvas() {
           }
         }
 
+        // ── 高好感度：主动靠近鼠标 ────────────────────────────────
+        if (currentFoxState === 'idle' && affection > 70) {
+          const mdx = mouseX - foxContainer.x
+          const mdy = mouseY - foxContainer.y
+          const md  = Math.sqrt(mdx*mdx + mdy*mdy)
+          if (md > 120 && mouseY > H*0.50 && mouseY < H*0.85
+              && Math.random() < 0.001 * ticker.deltaTime) {
+            targetX = Math.max(W*0.1, Math.min(W*0.9, mouseX))
+            targetY = Math.max(H*0.58, Math.min(H*0.76, mouseY))
+            actor.send({ type: 'START_WALK' })
+          }
+        }
+
         // ── 位置动画 ──────────────────────────────────────────────
         switch (currentFoxState) {
           case 'sleeping':
@@ -573,6 +729,32 @@ export default function FoxCanvas() {
         }
 
         foxContainer.scale.x = (facingLeft ? 1 : -1) * Math.abs(foxContainer.scale.x)
+
+        // ── 思维气泡 ──────────────────────────────────────────────
+        const BUBBLE_EMOJIS = ['💤','🍂','❓','🌙','🍎','⭐','🌿','🌧️']
+        bubbleTimer -= ticker.deltaTime
+        if (!bubble && currentFoxState === 'idle' && bubbleTimer <= 0) {
+          if (Math.random() < 0.008 * ticker.deltaTime) {
+            bubble = {
+              emoji:   BUBBLE_EMOJIS[Math.floor(Math.random() * BUBBLE_EMOJIS.length)],
+              alpha:   0,
+              timer:   180,
+              offsetY: 0,
+            }
+            bubbleText.text = bubble.emoji
+            bubbleTimer = 300 + Math.random() * 300
+          }
+        }
+        if (bubble) {
+          bubble.timer  -= ticker.deltaTime
+          bubble.offsetY = Math.min(bubble.offsetY + 0.4 * ticker.deltaTime, 14)
+          if (bubble.timer > 150)       bubble.alpha = Math.min(1, bubble.alpha + 0.04 * ticker.deltaTime)
+          else if (bubble.timer < 40)   bubble.alpha = Math.max(0, bubble.alpha - 0.05 * ticker.deltaTime)
+          bubbleText.alpha = bubble.alpha
+          bubbleText.x = foxContainer.x + 20
+          bubbleText.y = foxContainer.y - FRAME*FOX_SCALE*1.1 - bubble.offsetY
+          if (bubble.timer <= 0) { bubble = null; bubbleText.alpha = 0 }
+        }
       })
 
       syncAudio()
@@ -598,6 +780,7 @@ export default function FoxCanvas() {
         <Pill>🕐 {displayTime}</Pill>
         <Pill>{WEATHER_LABELS[displayWeather]}</Pill>
         <Pill>{STATE_LABELS[displayState]}</Pill>
+        <Pill>{'❤️'.repeat(Math.ceil(displayAffection/20))}{'🤍'.repeat(5 - Math.ceil(displayAffection/20))}</Pill>
       </div>
 
     </div>
