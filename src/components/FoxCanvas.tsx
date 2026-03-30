@@ -774,9 +774,9 @@ export default function FoxCanvas() {
         // ── AI 狐狸说话 ───────────────────────────────────────────
         if (speechCooldown > 0) speechCooldown -= ticker.deltaTime
 
-        // 每隔约 4 分钟（14400帧@60fps）随机触发
+        // 每隔约 30-90 秒随机触发（本地短语库无成本）
         if (!speechFetching && speechTimer <= 0 && speechCooldown <= 0
-            && currentFoxState !== 'sleeping' && Math.random() < 0.0003 * ticker.deltaTime) {
+            && Math.random() < 0.0012 * ticker.deltaTime) {
           speechFetching = true
           fetch('/api/fox-chat', {
             method: 'POST',
@@ -795,7 +795,7 @@ export default function FoxCanvas() {
                 speechTimer = 280
                 speechAlpha = 0
               }
-              speechCooldown = 7200 + Math.random() * 7200  // 2-4 分钟再触发
+              speechCooldown = 1800 + Math.random() * 3600  // 30-90 秒再触发
               speechFetching = false
             })
             .catch(() => { speechFetching = false })
