@@ -38,7 +38,7 @@ export default async function handler(req: any, res: any) {
     const text = raw.replace(/^[「『"']+|[」』"']+$/g, '')
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.json({ text })
-  } catch {
-    res.status(500).json({ text: '' })
+  } catch (err: any) {
+    res.status(500).json({ text: '', error: err?.message ?? String(err) })
   }
 }
